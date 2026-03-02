@@ -1,4 +1,6 @@
 import sqlite3
+from datetime import datetime, timezone
+from typing import Optional
 from config.settings import SQLITE_DB_PATH
 
 
@@ -35,6 +37,21 @@ def init_db():
             zone TEXT NOT NULL,
             total_spaces INTEGER NOT NULL,
             occupied_spaces INTEGER NOT NULL
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS reservations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            full_name TEXT NOT NULL,
+            license_plate TEXT NOT NULL,
+            start_datetime TEXT NOT NULL,
+            end_datetime TEXT NOT NULL,
+            zone_preference TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL,
+            reviewed_at TEXT,
+            admin_comment TEXT
         )
     """)
 
@@ -122,3 +139,120 @@ def query_availability():
         free = total - occupied
         lines.append(f"Zone {zone}: {free} spaces available out of {total}")
     return "\n".join(lines)
+
+
+def create_reservation(
+    full_name: str,
+    license_plate: str,
+    start_datetime: str,
+    end_datetime: str,
+    zone_preference: Optional[str] = None,
+) -> int:
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    created_at = datetime.now(timezone.utc).isoformat()
+
+    cursor.execute(
+        """
+        INSERT INTO reservations
+        (full_name, license_plate, start_datetime, end_datetime, zone_preference, status, created_at)
+        VALUES (?, ?, ?, ?, ?, 'pending', ?)
+        """,
+        (full_name, license_plate, start_datetime, end_datetime, zone_preference, created_at),
+    )
+
+    reservation_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+
+    return reservation_id
+
+
+def get_reservation(reservation_id: int) -> Optional[dict]:
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    row = cursor.execute(
+        """
+        SELECT id, full_name, license_plate, start_datetime, end_datetime,
+               zone_preference, status, created_at, reviewed_at, admin_comment
+        FROM reservations
+        WHERE id = ?
+        """,
+        (reservation_id,),
+    ).fetchone()
+
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "id": row[0],
+        "full_name": row[1],
+        "license_plate": row[2],
+        "start_datetime": row[3],
+        "end_datetime": row[4],
+        "zone_preference": row[5],
+        "status": row[6],
+        "created_at": row[7],
+        "reviewed_at": row[8],
+        "admin_comment": row[9],
+    }
+
+
+def get_pending_reservations() -> list[dict]:
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    rows = cursor.execute(
+        """
+        SELECT id, full_name, license_plate, start_datetime, end_datetime,
+               zone_preference, created_at
+        FROM reservations
+        WHERE status = 'pending'
+        ORDER BY created_at ASC
+        """
+    ).fetchall()
+
+    conn.close()
+
+    return [
+        {
+            "id": row[0],
+            "full_name": row[1],
+            "license_plate": row[2],
+            "start_datetime": row[3],
+            "end_datetime": row[4],
+            "zone_preference": row[5],
+            "created_at": row[6],
+        }
+        for row in rows
+    ]
+
+
+def update_reservation_status(
+    reservation_id: int,
+    status: str,
+    admin_comment: Optional[str] = None,
+) -> bool:
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    reviewed_at = datetime.now(timezone.utc).isoformat()
+
+    cursor.execute(
+        """
+        UPDATE reservations
+        SET status = ?, reviewed_at = ?, admin_comment = ?
+        WHERE id = ?
+        """,
+        (status, reviewed_at, admin_comment, reservation_id),
+    )
+
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+
+    return updated
