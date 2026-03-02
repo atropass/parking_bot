@@ -1,0 +1,46 @@
+# Environment and secrets
+.env
+.venv
+venv/
+env/
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+*.pyzw
+*.pyzwz
+.python-version
+
+# Database files (generated at runtime)
+db/chroma_store/
+db/parking.db
+
+# Test artifacts
+tests/_test_chroma/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Claude Code / CodemIE artifacts
+.codemie/
+.claude/
+.claude_code/
+*.claude.md
+.clauide_sessions/
+PROJECT_DESCRIPTION.MD
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

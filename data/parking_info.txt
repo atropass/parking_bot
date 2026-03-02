@@ -1,0 +1,39 @@
+CityPark Central Parking Facility
+
+General Information:
+CityPark Central is a modern multi-level parking facility located in the heart of downtown. The facility was established in 2020 and offers secure, covered parking for both short-term and long-term visitors. The building has 5 floors with a total capacity of 350 parking spaces across different zones. Each floor is equipped with CCTV surveillance, fire suppression systems, and emergency call stations.
+
+Location and Access:
+The parking facility is located at 42 Main Street, Downtown District, next to the Central Business Tower. The main entrance for vehicles is on Main Street, and there is a secondary entrance from Oak Avenue. Pedestrian access is available from both streets. The facility is accessible via public transport — the nearest metro station is "Central Square" (Line 2), a 3-minute walk from the parking entrance.
+
+Parking Zones:
+The facility is divided into three zones:
+- Zone A (Floor 1-2): Standard parking, suitable for sedans and small SUVs. Maximum vehicle height: 1.9 meters.
+- Zone B (Floor 3-4): Compact parking, designed for smaller vehicles. Maximum vehicle height: 1.7 meters.
+- Zone C (Floor 5): Oversized parking, suitable for vans, large SUVs, and vehicles with roof cargo. Maximum vehicle height: 2.5 meters.
+
+Electric Vehicle Charging:
+Floors 1 and 2 have 20 EV charging stations (10 per floor) compatible with Type 2 and CCS connectors. Charging is billed separately at the posted rate per kWh.
+
+Reservation Process:
+To reserve a parking space, users must provide the following details:
+1. Full name (first name and last name)
+2. Vehicle license plate number
+3. Desired reservation start date and time
+4. Desired reservation end date and time
+After submitting these details, the reservation request will be reviewed by a parking administrator. The administrator will confirm or decline the reservation based on availability. Users will receive a confirmation or rejection notification.
+
+Cancellation Policy:
+Reservations can be cancelled free of charge up to 2 hours before the reserved start time. Cancellations made within 2 hours of the start time will incur a fee equal to 1 hour of parking at the applicable zone rate.
+
+Security:
+The facility employs 24/7 security personnel and is monitored by over 100 CCTV cameras. All entry and exit points use automatic license plate recognition (ALPR). Visitors must keep their reservation confirmation (digital or printed) accessible for verification.
+
+Accessibility:
+Disabled parking spaces are available on Floor 1 (Zone A) near the elevator. The facility is fully wheelchair accessible with ramps and wide parking bays meeting ADA standards.
+
+Contact Information:
+Phone: +1-555-0123
+Email: info@cityparkcentral.com
+Website: www.cityparkcentral.com
+Customer support hours: Monday to Friday, 8:00 AM - 8:00 PM.
