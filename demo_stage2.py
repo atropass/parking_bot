@@ -32,7 +32,7 @@ def simulate_user_reservation():
         zone_preference="A",
     )
 
-    print(f"\n✓ Reservation created successfully!")
+    print(f"\n Reservation created successfully!")
     print(f"  Reservation ID: #{reservation_id}")
     print(f"  Name: John Doe")
     print(f"  License Plate: ABC-123")
@@ -66,14 +66,14 @@ def check_reservation_status(reservation_id: int):
     print(f"\nStatus: {reservation['status'].upper()}")
 
     if reservation['status'] == 'pending':
-        print("⏳ Waiting for admin approval...")
+        print("Waiting for admin approval...")
     elif reservation['status'] == 'approved':
-        print("✓ Approved!")
+        print(" Approved!")
         if reservation['admin_comment']:
             print(f"   Admin comment: {reservation['admin_comment']}")
         print(f"   Reviewed at: {reservation['reviewed_at']}")
     elif reservation['status'] == 'rejected':
-        print("✗ Rejected")
+        print("Rejected")
         if reservation['admin_comment']:
             print(f"   Reason: {reservation['admin_comment']}")
         print(f"   Reviewed at: {reservation['reviewed_at']}")

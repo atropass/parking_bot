@@ -21,7 +21,7 @@ def create_test_reservations():
         res_id = create_reservation(name, plate, start, end, zone)
         ids.append(res_id)
         zone_text = f"Zone {zone}" if zone else "Any zone"
-        print(f"✓ Created reservation #{res_id}: {name} ({plate}) - {zone_text}")
+        print(f"Created reservation #{res_id}: {name} ({plate}) - {zone_text}")
 
     print(f"\n{len(ids)} reservations created with status='pending'\n")
     return ids
@@ -33,13 +33,13 @@ def approve_reservation(reservation_id: int):
     try:
         response = requests.post(url, json={"comment": "Approved via demo"}, headers=headers)
         if response.status_code == 200:
-            print(f"✓ Approved reservation #{reservation_id}")
+            print(f"Approved reservation #{reservation_id}")
             return True
         else:
-            print(f"✗ Failed to approve #{reservation_id}: {response.text}")
+            print(f"Failed to approve #{reservation_id}: {response.text}")
             return False
     except requests.exceptions.ConnectionError:
-        print("\n✗ Error: Admin API server is not running!")
+        print("\nError: Admin API server is not running!")
         print("Start it with: python demo_stage2.py admin")
         sys.exit(1)
 

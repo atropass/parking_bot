@@ -1,13 +1,13 @@
-# Parking Reservation Chatbot - Stages 1-3
+# Parking Reservation Chatbot - Complete System (Stages 1-4)
 
-An intelligent chatbot for CityPark Central parking facility using Retrieval-Augmented Generation (RAG) for information retrieval, human-in-the-loop workflow for reservation approval, and file-based persistence for confirmed reservations.
+An intelligent end-to-end parking reservation system featuring Retrieval-Augmented Generation (RAG), human-in-the-loop approval workflow, file-based persistence, and full LangGraph orchestration.
 
 ## Project Status
 
-**Stage 1 (Complete):** RAG-based chatbot with information retrieval
-**Stage 2 (Complete):** Human-in-the-loop reservation approval system
-**Stage 3 (Complete):** File persistence for confirmed reservations
-**Stage 4 (Planned):** Full LangGraph orchestration
+**Stage 1 (Complete):** RAG-based chatbot with information retrieval 
+**Stage 2 (Complete):** Human-in-the-loop reservation approval system 
+**Stage 3 (Complete):** File persistence & security 
+**Stage 4 (Complete):** Full LangGraph workflow orchestration 
 
 ## Features
 
@@ -35,6 +35,21 @@ An intelligent chatbot for CityPark Central parking facility using Retrieval-Aug
 - **API Key Authentication** - Secure admin endpoints
 - **Second Agent (Admin Agent)** - LangChain-based conversational interface for administrators
 - Admin agent with natural language processing for reservation management
+
+### Stage 4: LangGraph Orchestration
+
+- **Complete workflow integration** - All stages unified in single pipeline
+- **LangGraph StateGraph** - State machine for workflow management
+- **5 orchestrated nodes:**
+  - User Interaction (data collection with LLM)
+  - Reservation Creation (database insertion)
+  - Admin Approval (polling mechanism)
+  - Data Recording (file persistence)
+  - User Notification (final status)
+- **Conditional routing** - Approved → file recording, Rejected → skip
+- **Polling mechanism** - Waits for admin decision without blocking
+- **Error handling** - Graceful degradation at each step
+- **Automated demo mode** - Simulated admin for testing
 
 ## Architecture
 
@@ -74,6 +89,55 @@ Tools with API Key Authentication:
     └─ reject_reservation → Admin API (secured)
 ```
 
+### Stage 4: Orchestrated Workflow
+
+```
+START (main_orchestrated.py)
+    ↓
+┌─────────────────────────────────────────────┐
+│  Node 1: User Interaction                   │
+│  • LLM conversation to collect data         │
+│  • Extract structured reservation info       │
+└─────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────┐
+│  Node 2: Create Reservation                 │
+│  • Insert into SQLite (status='pending')    │
+│  • Return reservation_id                     │
+└─────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────┐
+│  Node 3: Admin Approval (Polling)           │
+│  • Poll database every 2 seconds            │
+│  • Wait for admin decision via:             │
+│    - Admin Agent (run_admin_agent.py)      │
+│    - Admin API (curl/Swagger)               │
+│  • Max wait: 2 minutes                       │
+└─────────────────────────────────────────────┘
+    ↓
+   [CONDITIONAL EDGE]
+    ↓                    ↓
+ APPROVED            REJECTED
+    ↓                    ↓
+┌──────────────┐   ┌──────────────┐
+│ Node 4:      │   │ Skip to      │
+│ Record Data  │   │ Notification │
+│ • Write to   │   └──────────────┘
+│   file       │        ↓
+└──────────────┘        ↓
+    ↓                   ↓
+    └───────────────────┘
+            ↓
+┌─────────────────────────────────────────────┐
+│  Node 5: Notify User                        │
+│  • Display final status message             │
+│  • Include reservation details              │
+│  • Show admin comments                       │
+└─────────────────────────────────────────────┘
+    ↓
+   END
+```
+
 ### Human-in-the-Loop Workflow
 
 ```
@@ -98,7 +162,7 @@ Tools with API Key Authentication:
 - **Security:** API Key authentication (X-API-Key header)
 - **PII Protection:** Microsoft Presidio (spaCy-based NLP)
 - **File Storage:** Thread-safe text file persistence (Stage 3)
-- **Testing:** pytest with 39 test cases
+- **Testing:** pytest with 50 test cases
 
 ## Project Structure
 
@@ -120,11 +184,14 @@ parking_bot/
 ├── storage/                 # NEW: Stage 3
 │   ├── __init__.py
 │   └── file_writer.py       # Thread-safe file persistence
+├── orchestration/           # NEW: Stage 4
+│   ├── __init__.py
+│   └── workflow.py          # LangGraph workflow orchestration
 ├── guardrails/
 │   └── pii_filter.py        # PII detection and redaction
 ├── confirmed_reservations/  # NEW: Stage 3 (created at runtime)
 │   └── approved.txt         # Confirmed reservations file
-├── tests/                   # 39 test cases
+├── tests/                   # 50 test cases
 │   ├── test_agents.py
 │   ├── test_guardrails.py
 │   ├── test_sql_store.py
@@ -132,11 +199,14 @@ parking_bot/
 │   ├── test_reservations.py       # Stage 2
 │   ├── test_admin_api.py          # Stage 2 + security tests
 │   ├── test_file_writer.py        # NEW: Stage 3
-│   └── test_stage3_integration.py # NEW: Stage 3
+│   ├── test_stage3_integration.py # NEW: Stage 3
+│   └── test_workflow.py           # NEW: Stage 4
 ├── main.py                  # CLI chatbot entry point (User agent)
 ├── run_admin_agent.py      # NEW: Stage 3 - Admin agent CLI
+├── main_orchestrated.py    # NEW: Stage 4 - Orchestrated workflow
 ├── demo_stage2.py          # Stage 2 demo script
-└── demo_stage3.py          # NEW: Stage 3 demo script
+├── demo_stage3.py          # NEW: Stage 3 demo script
+└── demo_stage4.py          # NEW: Stage 4 demo script
 ```
 
 ## Installation
@@ -362,6 +432,56 @@ Bob Smith | XYZ-789 | 2026-03-11 10:00 - 2026-03-11 18:00 | 2026-03-09T16:00:00Z
 
 Format: `Name | License Plate | Reservation Period | Approval Time`
 
+### Running Stage 4 Workflow (Complete Orchestration)
+
+Stage 4 provides the **complete end-to-end workflow** orchestrating all previous stages.
+
+**Option 1: Automated Demo (Recommended for testing)**
+
+This mode simulates admin approval automatically:
+
+```bash
+python demo_stage4.py auto
+```
+
+**What happens:**
+1. User interaction node collects reservation data
+2. Creates pending reservation in database
+3. Simulated admin auto-approves after 8 seconds
+4. Records to file
+5. Notifies user of approval
+
+**Option 2: Manual Approval (Production-like)**
+
+This mode requires real admin interaction:
+
+```bash
+# Terminal 1: Run orchestrated workflow
+python demo_stage4.py manual
+
+# Terminal 2 (when prompted): Use Admin Agent
+python run_admin_agent.py
+# Then: "Show pending reservations"
+# Then: "Approve reservation 1"
+```
+
+**Option 3: Direct Orchestration (For development)**
+
+Use the main orchestration script directly:
+
+```bash
+python main_orchestrated.py
+```
+
+This provides the full experience with interactive prompts and detailed logging of each workflow node.
+
+**Workflow Features:**
+- Automatic state management across nodes
+- Conditional routing based on admin decision
+- Error handling and graceful degradation
+- Real-time polling for admin approval
+- Complete notification system
+
 ## Agent Tools
 
 The LangGraph agent has access to five tools:
@@ -524,7 +644,7 @@ Run the full test suite:
 pytest tests/ -v
 ```
 
-**Test Coverage (39 tests):**
+**Test Coverage (50 tests):**
 
 **test_agents.py (2 tests)**
 
@@ -575,6 +695,16 @@ pytest tests/ -v
 - Rejection does not write
 - Multiple approvals
 - Edge cases (no zone preference)
+
+**test_workflow.py (11 tests)** - Stage 4
+
+- User interaction node (data extraction)
+- Reservation creation node
+- Admin approval node (approved/rejected scenarios)
+- Data recording node (with conditional execution)
+- User notification node (all outcomes)
+- Conditional edge logic
+- Full workflow integration with mocked polling
 
 All tests use isolated fixtures to prevent cross-contamination.
 
@@ -659,7 +789,7 @@ Presidio combines regex, ML models, and context-aware rules for accurate detecti
 
 - CLI interface only (no web UI yet)
 - Admin must manually poll API or use Admin Agent for pending reservations
-- No real-time notifications (Stage 4 will add WebSocket or polling)
+- Workflow uses polling for admin approval (WebSocket push notifications could enhance UX)
 - SQLite availability data is static (production needs real-time updates)
 - Basic API Key authentication (production should use OAuth2/JWT)
 - File storage is append-only (no archival or rotation mechanism)
@@ -737,12 +867,118 @@ The agent understands commands like:
 - Invalid reservation IDs
 - Already processed reservations
 
-## Future Stages
+## Stage 4 Implementation Details
 
-**Stage 4: LangGraph Orchestration**
+### LangGraph Workflow Orchestration
 
-- Full state machine pipeline integration
-- Nodes for user interaction, admin approval, data recording
-- Automatic status notifications to users
-- Complete workflow with error handling and retries
+**Location:** `orchestration/workflow.py`
+
+**Architecture:**
+- LangGraph `StateGraph` for state machine orchestration
+- TypedDict-based state management across all nodes
+- Conditional routing based on admin approval decisions
+- Polling mechanism for human-in-the-loop integration
+
+### Workflow State
+
+```python
+class WorkflowState(TypedDict):
+    user_input: str
+    reservation_data: dict | None
+    reservation_id: int | None
+    admin_decision: Literal["approved", "rejected", "pending"] | None
+    admin_comment: str | None
+    final_message: str | None
+    error: str | None
+```
+
+State is immutable and passed between nodes, with each node returning updates.
+
+### Workflow Nodes
+
+**1. user_interaction_node**
+- Uses LLM with structured output to collect reservation data
+- Extracts: full_name, license_plate, start_datetime, end_datetime, zone_preference
+- Validates data completeness before proceeding
+
+**2. create_reservation_node**
+- Creates reservation in SQLite with status='pending'
+- Returns reservation_id for tracking
+- Sets admin_decision to 'pending'
+
+**3. admin_approval_node**
+- Implements polling mechanism (2-second intervals, 2-minute timeout)
+- Checks database for status changes (approved/rejected)
+- Displays admin comment when decision is made
+- Gracefully handles timeouts
+
+**4. record_data_node**
+- Only executes if admin_decision == 'approved'
+- Writes to file using Stage 3 file_writer module
+- Non-blocking: file write errors don't fail workflow
+
+**5. notify_user_node**
+- Terminal node that displays final message
+- Handles three outcomes: approved, rejected, error
+- Provides complete reservation details and next steps
+
+### Conditional Routing
+
+```python
+def should_record_data(state: WorkflowState) -> Literal["record_data", "notify_user"]:
+    if state.get("error") or state["admin_decision"] != "approved":
+        return "notify_user"
+    return "record_data"
+```
+
+**Graph Structure:**
+```
+START → user_interaction → create_reservation → admin_approval
+       → [if approved] → record_data → notify_user → END
+       → [if rejected/error] → notify_user → END
+```
+
+### Error Handling
+
+- Errors propagate through state without crashing workflow
+- Each node checks for existing errors before executing
+- Failed file writes log warnings but don't block notifications
+- Timeout handling with user-friendly messages
+
+### Integration Points
+
+**With Stage 1 (RAG):**
+- Uses `ParkingReservation` schema from agents/rag_chain.py
+- Leverages LLM for natural language interaction
+
+**With Stage 2 (Admin API):**
+- Polls database updated by Admin API or Admin Agent
+- Compatible with existing approval mechanisms
+
+**With Stage 3 (File Persistence):**
+- Calls `write_confirmed_reservation()` for approved reservations
+- Maintains same file format and thread safety
+
+### Testing
+
+**Location:** `tests/test_workflow.py`
+
+**Coverage:** 11 test cases covering:
+- Individual node functionality
+- Error handling scenarios
+- Conditional edge logic
+- Full workflow integration
+- Mocked time.sleep for fast tests
+
+### Demo Modes
+
+**Automated Mode:**
+- Simulated admin approval using background thread
+- 8-second delay for realistic testing
+- No manual intervention required
+
+**Manual Mode:**
+- Requires real Admin Agent or API interaction
+- Production-like experience
+- Tests full integration with existing systems
 
