@@ -1,11 +1,12 @@
 import sys
 from db.sql_store import init_db, create_reservation, get_reservation, get_pending_reservations
+from config.settings import ADMIN_API_PORT, ADMIN_API_HOST
 
 
 def run_admin_server():
-    print("Starting Admin API server on http://localhost:8000")
-    print("Access interactive docs at: http://localhost:8000/docs")
-    print("Dashboard at: http://localhost:8000/admin/dashboard")
+    print(f"Starting Admin API server on http://{ADMIN_API_HOST}:{ADMIN_API_PORT}")
+    print(f"Access interactive docs at: http://{ADMIN_API_HOST}:{ADMIN_API_PORT}/docs")
+    print(f"Dashboard at: http://{ADMIN_API_HOST}:{ADMIN_API_PORT}/admin/dashboard")
     print("\nAvailable endpoints:")
     print("  GET  /admin/pending          - List pending reservations")
     print("  POST /admin/approve/{id}     - Approve reservation")
@@ -14,7 +15,7 @@ def run_admin_server():
 
     import uvicorn
     from admin.approval_service import app
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=ADMIN_API_HOST, port=ADMIN_API_PORT)
 
 
 def simulate_user_reservation():
@@ -40,9 +41,9 @@ def simulate_user_reservation():
     print(f"  Status: pending")
     print(f"\nThe reservation is waiting for admin approval.")
     print(f"\nTo approve via API:")
-    print(f"  curl -X POST http://localhost:8000/admin/approve/{reservation_id} -H 'Content-Type: application/json' -d '{{}}'")
+    print(f"  curl -X POST http://{ADMIN_API_HOST}:{ADMIN_API_PORT}/admin/approve/{reservation_id} -H 'Content-Type: application/json' -H 'X-API-Key: your_key' -d '{{}}'")
     print(f"\nTo reject via API:")
-    print(f"  curl -X POST http://localhost:8000/admin/reject/{reservation_id} -H 'Content-Type: application/json' -d '{{\"reason\": \"No space available\"}}'")
+    print(f"  curl -X POST http://{ADMIN_API_HOST}:{ADMIN_API_PORT}/admin/reject/{reservation_id} -H 'Content-Type: application/json' -H 'X-API-Key: your_key' -d '{{\"reason\": \"No space available\"}}'")
     print(f"\nTo check status:")
     print(f"  python demo_stage2.py check {reservation_id}")
 

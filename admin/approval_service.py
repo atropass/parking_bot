@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Security
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 from typing import Optional
 from fastapi.responses import HTMLResponse
@@ -7,6 +8,8 @@ from db.sql_store import (
     get_reservation,
     update_reservation_status,
 )
+from storage.file_writer import write_confirmed_reservation
+from config.settings import ADMIN_API_KEY
 
 
 app = FastAPI(
@@ -14,6 +17,17 @@ app = FastAPI(
     description="Human-in-the-loop reservation approval service",
     version="1.0.0",
 )
+
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
+
+
+def verify_api_key(api_key: str = Security(api_key_header)) -> str:
+    if api_key != ADMIN_API_KEY:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid API key"
+        )
+    return api_key
 
 
 class ApprovalRequest(BaseModel):
@@ -63,13 +77,13 @@ def root():
 
 
 @app.get("/admin/pending", response_model=list[PendingReservationResponse])
-def list_pending_reservations():
+def list_pending_reservations(api_key: str = Security(verify_api_key)):
     pending = get_pending_reservations()
     return pending
 
 
 @app.get("/admin/reservation/{reservation_id}", response_model=ReservationResponse)
-def get_reservation_details(reservation_id: int):
+def get_reservation_details(reservation_id: int, api_key: str = Security(verify_api_key)):
     reservation = get_reservation(reservation_id)
     if not reservation:
         raise HTTPException(status_code=404, detail=f"Reservation {reservation_id} not found")
@@ -77,7 +91,7 @@ def get_reservation_details(reservation_id: int):
 
 
 @app.post("/admin/approve/{reservation_id}", response_model=StatusResponse)
-def approve_reservation(reservation_id: int, request: ApprovalRequest):
+def approve_reservation(reservation_id: int, request: ApprovalRequest, api_key: str = Security(verify_api_key)):
     reservation = get_reservation(reservation_id)
     if not reservation:
         raise HTTPException(status_code=404, detail=f"Reservation {reservation_id} not found")
@@ -97,6 +111,18 @@ def approve_reservation(reservation_id: int, request: ApprovalRequest):
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update reservation")
 
+    updated_reservation = get_reservation(reservation_id)
+    try:
+        write_confirmed_reservation(
+            full_name=updated_reservation["full_name"],
+            license_plate=updated_reservation["license_plate"],
+            start_datetime=updated_reservation["start_datetime"],
+            end_datetime=updated_reservation["end_datetime"],
+            approved_at=updated_reservation["reviewed_at"],
+        )
+    except Exception as e:
+        print(f"Warning: Failed to write reservation to file: {e}")
+
     return StatusResponse(
         success=True,
         message=f"Reservation {reservation_id} approved successfully"
@@ -104,7 +130,7 @@ def approve_reservation(reservation_id: int, request: ApprovalRequest):
 
 
 @app.post("/admin/reject/{reservation_id}", response_model=StatusResponse)
-def reject_reservation(reservation_id: int, request: RejectionRequest):
+def reject_reservation(reservation_id: int, request: RejectionRequest, api_key: str = Security(verify_api_key)):
     reservation = get_reservation(reservation_id)
     if not reservation:
         raise HTTPException(status_code=404, detail=f"Reservation {reservation_id} not found")

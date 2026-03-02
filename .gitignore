@@ -44,3 +44,5 @@ PROJECT_DESCRIPTION.MD
 # OS
 .DS_Store
 Thumbs.db
+
+confirmed_reservations/

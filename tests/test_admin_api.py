@@ -1,17 +1,14 @@
-"""Tests for Stage 2: Admin REST API endpoints."""
-
 import os
 import pytest
 from fastapi.testclient import TestClient
 
 from admin.approval_service import app
 from db.sql_store import init_db, create_reservation
-from config.settings import SQLITE_DB_PATH
+from config.settings import SQLITE_DB_PATH, ADMIN_API_KEY
 
 
 @pytest.fixture(autouse=True)
 def clean_db():
-    """Ensure a fresh database for each test."""
     if os.path.exists(SQLITE_DB_PATH):
         os.remove(SQLITE_DB_PATH)
     os.makedirs(os.path.dirname(SQLITE_DB_PATH), exist_ok=True)
@@ -23,31 +20,31 @@ def clean_db():
 
 @pytest.fixture
 def client():
-    """FastAPI test client."""
     return TestClient(app)
 
 
+@pytest.fixture
+def auth_headers():
+    return {"X-API-Key": ADMIN_API_KEY}
+
+
 def test_health_check(client):
-    """Test the root endpoint returns OK."""
     response = client.get("/")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
 
 
-def test_list_pending_reservations_empty(client):
-    """Test listing pending reservations when there are none."""
-    response = client.get("/admin/pending")
+def test_list_pending_reservations_empty(client, auth_headers):
+    response = client.get("/admin/pending", headers=auth_headers)
     assert response.status_code == 200
     assert response.json() == []
 
 
-def test_list_pending_reservations_with_data(client):
-    """Test listing pending reservations."""
-    # Create some reservations
+def test_list_pending_reservations_with_data(client, auth_headers):
     create_reservation("User 1", "AAA-111", "2026-03-10 09:00", "2026-03-10 17:00", "A")
     create_reservation("User 2", "BBB-222", "2026-03-11 10:00", "2026-03-11 18:00")
 
-    response = client.get("/admin/pending")
+    response = client.get("/admin/pending", headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
     assert len(data) == 2
@@ -55,13 +52,12 @@ def test_list_pending_reservations_with_data(client):
     assert data[1]["full_name"] == "User 2"
 
 
-def test_get_reservation_details(client):
-    """Test getting full details of a reservation."""
+def test_get_reservation_details(client, auth_headers):
     reservation_id = create_reservation(
         "John Doe", "ABC-123", "2026-03-10 09:00", "2026-03-10 17:00", "A"
     )
 
-    response = client.get(f"/admin/reservation/{reservation_id}")
+    response = client.get(f"/admin/reservation/{reservation_id}", headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
     assert data["id"] == reservation_id
@@ -69,14 +65,12 @@ def test_get_reservation_details(client):
     assert data["status"] == "pending"
 
 
-def test_get_reservation_details_not_found(client):
-    """Test getting a non-existent reservation returns 404."""
-    response = client.get("/admin/reservation/999")
+def test_get_reservation_details_not_found(client, auth_headers):
+    response = client.get("/admin/reservation/999", headers=auth_headers)
     assert response.status_code == 404
 
 
-def test_approve_reservation(client):
-    """Test approving a reservation."""
+def test_approve_reservation(client, auth_headers):
     reservation_id = create_reservation(
         "John Doe", "ABC-123", "2026-03-10 09:00", "2026-03-10 17:00"
     )
@@ -84,31 +78,29 @@ def test_approve_reservation(client):
     response = client.post(
         f"/admin/approve/{reservation_id}",
         json={"comment": "Looks good"},
+        headers=auth_headers,
     )
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
     assert "approved successfully" in data["message"]
 
-    # Verify the status was updated
-    res_response = client.get(f"/admin/reservation/{reservation_id}")
+    res_response = client.get(f"/admin/reservation/{reservation_id}", headers=auth_headers)
     assert res_response.json()["status"] == "approved"
     assert res_response.json()["admin_comment"] == "Looks good"
 
 
-def test_approve_reservation_without_comment(client):
-    """Test approving without a comment."""
+def test_approve_reservation_without_comment(client, auth_headers):
     reservation_id = create_reservation(
         "John Doe", "ABC-123", "2026-03-10 09:00", "2026-03-10 17:00"
     )
 
-    response = client.post(f"/admin/approve/{reservation_id}", json={})
+    response = client.post(f"/admin/approve/{reservation_id}", json={}, headers=auth_headers)
     assert response.status_code == 200
     assert response.json()["success"] is True
 
 
-def test_reject_reservation(client):
-    """Test rejecting a reservation."""
+def test_reject_reservation(client, auth_headers):
     reservation_id = create_reservation(
         "John Doe", "ABC-123", "2026-03-10 09:00", "2026-03-10 17:00"
     )
@@ -116,57 +108,65 @@ def test_reject_reservation(client):
     response = client.post(
         f"/admin/reject/{reservation_id}",
         json={"reason": "No space available"},
+        headers=auth_headers,
     )
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
     assert "rejected" in data["message"]
 
-    # Verify the status was updated
-    res_response = client.get(f"/admin/reservation/{reservation_id}")
+    res_response = client.get(f"/admin/reservation/{reservation_id}", headers=auth_headers)
     assert res_response.json()["status"] == "rejected"
     assert res_response.json()["admin_comment"] == "No space available"
 
 
-def test_approve_non_existent_reservation(client):
-    """Test approving a non-existent reservation returns 404."""
-    response = client.post("/admin/approve/999", json={})
+def test_approve_non_existent_reservation(client, auth_headers):
+    response = client.post("/admin/approve/999", json={}, headers=auth_headers)
     assert response.status_code == 404
 
 
-def test_reject_non_existent_reservation(client):
-    """Test rejecting a non-existent reservation returns 404."""
-    response = client.post("/admin/reject/999", json={"reason": "test"})
+def test_reject_non_existent_reservation(client, auth_headers):
+    response = client.post("/admin/reject/999", json={"reason": "test"}, headers=auth_headers)
     assert response.status_code == 404
 
 
-def test_cannot_approve_already_approved_reservation(client):
-    """Test that you cannot approve an already approved reservation."""
+def test_cannot_approve_already_approved_reservation(client, auth_headers):
     reservation_id = create_reservation(
         "John Doe", "ABC-123", "2026-03-10 09:00", "2026-03-10 17:00"
     )
 
-    # First approval
-    response1 = client.post(f"/admin/approve/{reservation_id}", json={})
+    response1 = client.post(f"/admin/approve/{reservation_id}", json={}, headers=auth_headers)
     assert response1.status_code == 200
 
-    # Second approval should fail
-    response2 = client.post(f"/admin/approve/{reservation_id}", json={})
+    response2 = client.post(f"/admin/approve/{reservation_id}", json={}, headers=auth_headers)
     assert response2.status_code == 400
     assert "already approved" in response2.json()["detail"]
 
 
-def test_cannot_reject_already_rejected_reservation(client):
-    """Test that you cannot reject an already rejected reservation."""
+def test_cannot_reject_already_rejected_reservation(client, auth_headers):
     reservation_id = create_reservation(
         "John Doe", "ABC-123", "2026-03-10 09:00", "2026-03-10 17:00"
     )
 
-    # First rejection
-    response1 = client.post(f"/admin/reject/{reservation_id}", json={"reason": "test"})
+    response1 = client.post(f"/admin/reject/{reservation_id}", json={"reason": "test"}, headers=auth_headers)
     assert response1.status_code == 200
 
-    # Second rejection should fail
-    response2 = client.post(f"/admin/reject/{reservation_id}", json={"reason": "test"})
+    response2 = client.post(f"/admin/reject/{reservation_id}", json={"reason": "test"}, headers=auth_headers)
     assert response2.status_code == 400
     assert "already rejected" in response2.json()["detail"]
+
+
+def test_missing_api_key_returns_401(client):
+    response = client.get("/admin/pending")
+    assert response.status_code == 401
+
+    response = client.post("/admin/approve/1", json={})
+    assert response.status_code == 401
+
+
+def test_invalid_api_key_returns_403(client):
+    bad_headers = {"X-API-Key": "invalid-key"}
+
+    response = client.get("/admin/pending", headers=bad_headers)
+    assert response.status_code == 403
+    assert "Invalid API key" in response.json()["detail"]

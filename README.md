@@ -1,12 +1,12 @@
-# Parking Reservation Chatbot - Stages 1 & 2
+# Parking Reservation Chatbot - Stages 1-3
 
-An intelligent chatbot for CityPark Central parking facility using Retrieval-Augmented Generation (RAG) for information retrieval and human-in-the-loop workflow for reservation approval.
+An intelligent chatbot for CityPark Central parking facility using Retrieval-Augmented Generation (RAG) for information retrieval, human-in-the-loop workflow for reservation approval, and file-based persistence for confirmed reservations.
 
 ## Project Status
 
 **Stage 1 (Complete):** RAG-based chatbot with information retrieval
 **Stage 2 (Complete):** Human-in-the-loop reservation approval system
-**Stage 3 (Planned):** MCP server for confirmed reservation persistence
+**Stage 3 (Complete):** File persistence for confirmed reservations
 **Stage 4 (Planned):** Full LangGraph orchestration
 
 ## Features
@@ -26,6 +26,15 @@ An intelligent chatbot for CityPark Central parking facility using Retrieval-Aug
 - FastAPI service with interactive documentation
 - Database persistence for reservation tracking
 - Integration with Stage 1 chatbot via new tool
+
+### Stage 3: File Persistence & Security
+
+- Thread-safe file writing for confirmed reservations
+- Text file format: `Name | Plate | Period | Approval Time`
+- Automatic file persistence on approval
+- **API Key Authentication** - Secure admin endpoints
+- **Second Agent (Admin Agent)** - LangChain-based conversational interface for administrators
+- Admin agent with natural language processing for reservation management
 
 ## Architecture
 
@@ -47,9 +56,22 @@ Tool Selection:
             ↓
     Admin API (FastAPI server)
             ↓
-    Admin approval/rejection
+    Admin approval/rejection (via API or Admin Agent)
             ↓
     Database updated (status='approved'/'rejected')
+            ↓
+    (Stage 3) Write to file if approved
+            ↓
+    confirmed_reservations/approved.txt
+
+Admin (CLI) - Stage 3
+    ↓
+Admin Agent (Gemini 2.5 Flash) - Second Agent
+    ↓
+Tools with API Key Authentication:
+    ├─ get_pending_reservations → Admin API (secured)
+    ├─ approve_reservation → Admin API (secured)
+    └─ reject_reservation → Admin API (secured)
 ```
 
 ### Human-in-the-Loop Workflow
@@ -71,10 +93,12 @@ Tool Selection:
 - **Embeddings:** Gemini Embedding 001
 - **Vector Database:** ChromaDB (persistent, local storage)
 - **SQL Database:** SQLite (hours, pricing, availability, reservations)
-- **Agent Framework:** LangGraph (ReAct agent pattern)
-- **Admin API:** FastAPI with Pydantic validation
+- **Agent Framework:** LangGraph (ReAct agent pattern) - 2 agents (User + Admin)
+- **Admin API:** FastAPI with Pydantic validation + API Key authentication
+- **Security:** API Key authentication (X-API-Key header)
 - **PII Protection:** Microsoft Presidio (spaCy-based NLP)
-- **Testing:** pytest with 27 test cases
+- **File Storage:** Thread-safe text file persistence (Stage 3)
+- **Testing:** pytest with 39 test cases
 
 ## Project Structure
 
@@ -88,21 +112,31 @@ parking_bot/
 │   ├── sql_store.py         # SQLite operations (Stage 1 + Stage 2)
 │   └── vector_store.py      # ChromaDB operations
 ├── agents/
-│   └── rag_chain.py         # LangGraph agent + 5 tools
-├── admin/                   # NEW: Stage 2
+│   ├── rag_chain.py         # User agent (LangGraph + 5 tools)
+│   └── admin_agent.py       # NEW: Admin agent (Stage 3 - Second Agent)
+├── admin/                   # Stage 2
 │   ├── __init__.py
-│   └── approval_service.py  # FastAPI admin REST API
+│   └── approval_service.py  # FastAPI admin REST API with API Key auth
+├── storage/                 # NEW: Stage 3
+│   ├── __init__.py
+│   └── file_writer.py       # Thread-safe file persistence
 ├── guardrails/
 │   └── pii_filter.py        # PII detection and redaction
-├── tests/                   # 27 test cases
+├── confirmed_reservations/  # NEW: Stage 3 (created at runtime)
+│   └── approved.txt         # Confirmed reservations file
+├── tests/                   # 39 test cases
 │   ├── test_agents.py
 │   ├── test_guardrails.py
 │   ├── test_sql_store.py
 │   ├── test_vector_store.py
-│   ├── test_reservations.py     # NEW: Stage 2
-│   └── test_admin_api.py        # NEW: Stage 2
-├── main.py                  # CLI chatbot entry point
-└── demo_stage2.py          # NEW: Stage 2 demo script
+│   ├── test_reservations.py       # Stage 2
+│   ├── test_admin_api.py          # Stage 2 + security tests
+│   ├── test_file_writer.py        # NEW: Stage 3
+│   └── test_stage3_integration.py # NEW: Stage 3
+├── main.py                  # CLI chatbot entry point (User agent)
+├── run_admin_agent.py      # NEW: Stage 3 - Admin agent CLI
+├── demo_stage2.py          # Stage 2 demo script
+└── demo_stage3.py          # NEW: Stage 3 demo script
 ```
 
 ## Installation
@@ -143,8 +177,14 @@ python -m spacy download en_core_web_lg
 1. Configure environment:
 
 ```bash
-echo "GOOGLE_API_KEY=your_api_key_here" > .env
+# Create .env file with API keys
+cat > .env << EOF
+GOOGLE_API_KEY=your_gemini_api_key_here
+ADMIN_API_KEY=your_secure_admin_key_here
+EOF
 ```
+
+**Important:** Change `ADMIN_API_KEY` to a strong random key in production.
 
 ## Usage
 
@@ -200,7 +240,8 @@ Creates a test reservation with ID #1 and status 'pending'.
 View pending reservations:
 
 ```bash
-curl http://localhost:8000/admin/pending
+curl http://localhost:8000/admin/pending \
+  -H "X-API-Key: your_admin_key_here"
 ```
 
 Approve a reservation:
@@ -208,6 +249,7 @@ Approve a reservation:
 ```bash
 curl -X POST http://localhost:8000/admin/approve/1 \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: your_admin_key_here" \
   -d '{"comment": "Approved"}'
 ```
 
@@ -216,8 +258,11 @@ Reject a reservation:
 ```bash
 curl -X POST http://localhost:8000/admin/reject/1 \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: your_admin_key_here" \
   -d '{"reason": "No space available"}'
 ```
+
+**Note:** All admin endpoints require `X-API-Key` header for authentication.
 
 Check reservation status:
 
@@ -235,6 +280,87 @@ Interactive API documentation allows testing all endpoints:
 - `GET /admin/reservation/{id}` - Get reservation details
 - `POST /admin/approve/{id}` - Approve reservation
 - `POST /admin/reject/{id}` - Reject reservation
+
+**Security Note:** Swagger UI will prompt for API Key. Use the value from your `.env` file.
+
+### Running Admin Agent (Stage 3 - Second Agent)
+
+The Admin Agent provides a conversational interface for administrators using natural language.
+
+**Start the Admin Agent:**
+
+```bash
+python run_admin_agent.py
+```
+
+**Example interactions:**
+
+```
+Admin: Show me all pending reservations
+Agent: Found 3 pending reservations:
+       ID: 1
+       Name: Alice Johnson
+       License Plate: ABC-123
+       Period: 2026-03-10 09:00 to 2026-03-10 17:00
+       Preferred Zone: A
+       Created: 2026-03-09T10:00:00Z
+       ...
+
+Admin: Approve reservation 1 because VIP customer
+Agent: Success: Reservation 1 approved successfully
+
+Admin: Reject reservation 2 - no space available
+Agent: Success: Reservation 2 rejected: no space available
+```
+
+**Features:**
+- Natural language understanding
+- Automatic API key authentication
+- Error handling and validation
+- Conversational feedback
+
+**Type 'exit' or 'quit' to stop the agent.**
+
+### Running Stage 3 Demo (File Persistence)
+
+Stage 3 automatically writes approved reservations to `confirmed_reservations/approved.txt`.
+
+**Demo workflow (requires Admin API running):**
+
+```bash
+# Terminal 1: Start Admin API
+python demo_stage2.py admin
+
+# Terminal 2: Run full Stage 3 demo
+python demo_stage3.py demo
+```
+
+This will:
+1. Create 3 test reservations
+2. Approve them via API
+3. Display confirmed reservations from file
+4. Show raw file contents
+
+**Other commands:**
+
+```bash
+# Check current file contents
+python demo_stage3.py check
+
+# Create test reservations only
+python demo_stage3.py create
+```
+
+**File format:**
+
+Each approved reservation is appended to `confirmed_reservations/approved.txt`:
+
+```
+Alice Johnson | ABC-123 | 2026-03-10 09:00 - 2026-03-10 17:00 | 2026-03-09T15:30:00Z
+Bob Smith | XYZ-789 | 2026-03-11 10:00 - 2026-03-11 18:00 | 2026-03-09T16:00:00Z
+```
+
+Format: `Name | License Plate | Reservation Period | Approval Time`
 
 ## Agent Tools
 
@@ -372,9 +498,23 @@ All endpoints use Pydantic models for validation:
 
 ### Error Handling
 
-- 404: Reservation not found
-- 400: Reservation already processed (cannot approve/reject twice)
-- 500: Database operation failed
+- **401 Unauthorized**: Missing API key
+- **403 Forbidden**: Invalid API key
+- **404 Not Found**: Reservation not found
+- **400 Bad Request**: Reservation already processed (cannot approve/reject twice)
+- **500 Internal Server Error**: Database operation failed
+
+### Security
+
+**API Key Authentication (Stage 3):**
+
+All admin endpoints (`/admin/*`) require authentication via `X-API-Key` header.
+
+- API key is configured in `.env` file as `ADMIN_API_KEY`
+- Default key: `default-admin-key-change-in-production`
+- **Change this in production!**
+
+The Admin Agent automatically uses the API key from configuration.
 
 ## Testing
 
@@ -384,7 +524,7 @@ Run the full test suite:
 pytest tests/ -v
 ```
 
-**Test Coverage (27 tests):**
+**Test Coverage (39 tests):**
 
 **test_agents.py (2 tests)**
 
@@ -413,12 +553,28 @@ pytest tests/ -v
 - Status updates
 - Edge cases
 
-**test_admin_api.py (12 tests)** - Stage 2
+**test_admin_api.py (14 tests)** - Stage 2 + Security
 
 - API endpoint functionality
 - Approval/rejection workflows
-- Error handling (404, 400)
+- Error handling (404, 400, 401, 403)
 - Idempotency checks
+- API key authentication tests (Stage 3)
+
+**test_file_writer.py (6 tests)** - Stage 3
+
+- Single and multiple reservation writes
+- File format validation
+- Thread-safe concurrent writes
+- File read operations
+- Cleanup operations
+
+**test_stage3_integration.py (4 tests)** - Stage 3
+
+- Approval writes to file
+- Rejection does not write
+- Multiple approvals
+- Edge cases (no zone preference)
 
 All tests use isolated fixtures to prevent cross-contamination.
 
@@ -502,18 +658,86 @@ Presidio combines regex, ML models, and context-aware rules for accurate detecti
 ## Known Limitations
 
 - CLI interface only (no web UI yet)
-- Admin must manually poll API for pending reservations
+- Admin must manually poll API or use Admin Agent for pending reservations
 - No real-time notifications (Stage 4 will add WebSocket or polling)
 - SQLite availability data is static (production needs real-time updates)
-- No authentication on admin API (add OAuth2 for production)
+- Basic API Key authentication (production should use OAuth2/JWT)
+- File storage is append-only (no archival or rotation mechanism)
+- Admin Agent runs locally (no multi-user support)
+
+## Stage 3 Implementation Details
+
+### File Writer Module
+
+**Location:** `storage/file_writer.py`
+
+**Thread Safety:**
+Uses `threading.Lock()` to prevent concurrent write conflicts when multiple admins approve reservations simultaneously.
+
+**File Operations:**
+- **write_confirmed_reservation()** - Appends approved reservation to file
+- **get_confirmed_reservations()** - Reads all confirmed reservations
+- **clear_confirmed_reservations()** - Clears file (testing only)
+
+**Integration Point:**
+The `admin/approval_service.py` approve endpoint automatically calls `write_confirmed_reservation()` after successful database update.
+
+**Error Handling:**
+File write errors are caught and logged but do not fail the approval (database is source of truth).
+
+### API Key Authentication
+
+**Location:** `admin/approval_service.py`
+
+**Implementation:**
+- FastAPI `APIKeyHeader` security scheme
+- Header name: `X-API-Key`
+- Validates against `ADMIN_API_KEY` from environment
+- Returns **401** if key is missing, **403** if key is invalid
+
+**Usage:**
+```python
+from fastapi import Security
+from fastapi.security import APIKeyHeader
+
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
+
+def verify_api_key(api_key: str = Security(api_key_header)) -> str:
+    if api_key != ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid API key")
+    return api_key
+```
+
+All admin endpoints use `api_key: str = Security(verify_api_key)` dependency.
+
+### Admin Agent (Second Agent)
+
+**Location:** `agents/admin_agent.py`
+
+**Architecture:**
+- LangChain `ChatGoogleGenerativeAI` with Gemini 2.5 Flash
+- LangGraph `create_react_agent` pattern
+- 3 tools with API authentication
+
+**Tools:**
+1. **get_pending_reservations()** - Fetches pending list from API
+2. **approve_reservation(id, comment)** - Approves with optional comment
+3. **reject_reservation(id, reason)** - Rejects with required reason
+
+All tools automatically include `X-API-Key` header when calling Admin API.
+
+**Natural Language Processing:**
+The agent understands commands like:
+- "Show me pending reservations"
+- "Approve reservation 1 because VIP"
+- "Reject 2 - no space"
+
+**Error Handling:**
+- API connection errors
+- Invalid reservation IDs
+- Already processed reservations
 
 ## Future Stages
-
-**Stage 3: MCP Server Integration**
-
-- Write confirmed reservations to persistent storage
-- File format: `Name | Plate | Period | Approval Time`
-- MCP server or function calling for data persistence
 
 **Stage 4: LangGraph Orchestration**
 
