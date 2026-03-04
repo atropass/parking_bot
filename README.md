@@ -40,9 +40,9 @@ An intelligent end-to-end parking reservation system featuring Retrieval-Augment
 
 - **Complete workflow integration** - All stages unified in single pipeline
 - **LangGraph StateGraph** - State machine for workflow management
-- **5 orchestrated nodes:**
-  - User Interaction (data collection with LLM)
-  - Reservation Creation (database insertion)
+- **Real interactive RAG agent** - Same agent from Stage 1 used in the workflow
+- **4 orchestrated nodes:**
+  - User Interaction (interactive chat with RAG agent, reservation submitted via tool)
   - Admin Approval (polling mechanism)
   - Data Recording (file persistence)
   - User Notification (final status)
@@ -96,18 +96,14 @@ START (main_orchestrated.py)
     ↓
 ┌─────────────────────────────────────────────┐
 │  Node 1: User Interaction                   │
-│  • LLM conversation to collect data         │
-│  • Extract structured reservation info       │
+│  • Interactive chat with RAG agent          │
+│  • Agent collects data conversationally     │
+│  • Agent calls submit_reservation tool      │
+│  • Reservation created in DB automatically  │
 └─────────────────────────────────────────────┘
     ↓
 ┌─────────────────────────────────────────────┐
-│  Node 2: Create Reservation                 │
-│  • Insert into SQLite (status='pending')    │
-│  • Return reservation_id                     │
-└─────────────────────────────────────────────┘
-    ↓
-┌─────────────────────────────────────────────┐
-│  Node 3: Admin Approval (Polling)           │
+│  Node 2: Admin Approval (Polling)           │
 │  • Poll database every 2 seconds            │
 │  • Wait for admin decision via:             │
 │    - Admin Agent (run_admin_agent.py)      │
@@ -120,7 +116,7 @@ START (main_orchestrated.py)
  APPROVED            REJECTED
     ↓                    ↓
 ┌──────────────┐   ┌──────────────┐
-│ Node 4:      │   │ Skip to      │
+│ Node 3:      │   │ Skip to      │
 │ Record Data  │   │ Notification │
 │ • Write to   │   └──────────────┘
 │   file       │        ↓
@@ -129,7 +125,7 @@ START (main_orchestrated.py)
     └───────────────────┘
             ↓
 ┌─────────────────────────────────────────────┐
-│  Node 5: Notify User                        │
+│  Node 4: Notify User                        │
 │  • Display final status message             │
 │  • Include reservation details              │
 │  • Show admin comments                       │
@@ -445,11 +441,10 @@ python demo_stage4.py auto
 ```
 
 **What happens:**
-1. User interaction node collects reservation data
-2. Creates pending reservation in database
-3. Simulated admin auto-approves after 8 seconds
-4. Records to file
-5. Notifies user of approval
+1. You chat with the RAG agent interactively to make a reservation
+2. Agent calls `submit_reservation` tool, creating a pending record in the DB
+3. Background thread detects the pending reservation and auto-approves it
+4. Workflow records to file and notifies you of approval
 
 **Option 2: Manual Approval (Production-like)**
 
@@ -897,27 +892,24 @@ State is immutable and passed between nodes, with each node returning updates.
 ### Workflow Nodes
 
 **1. user_interaction_node**
-- Uses LLM with structured output to collect reservation data
-- Extracts: full_name, license_plate, start_datetime, end_datetime, zone_preference
-- Validates data completeness before proceeding
+- Launches the full RAG agent from Stage 1 (`build_agent()`)
+- User chats interactively via `input()` — can ask questions, get info, then make a reservation
+- When the agent calls `submit_reservation` tool, the reservation is created in the DB
+- The node detects the reservation ID from the tool response and populates workflow state
+- PII redaction is applied to all agent responses
 
-**2. create_reservation_node**
-- Creates reservation in SQLite with status='pending'
-- Returns reservation_id for tracking
-- Sets admin_decision to 'pending'
-
-**3. admin_approval_node**
+**2. admin_approval_node**
 - Implements polling mechanism (2-second intervals, 2-minute timeout)
 - Checks database for status changes (approved/rejected)
 - Displays admin comment when decision is made
 - Gracefully handles timeouts
 
-**4. record_data_node**
+**3. record_data_node**
 - Only executes if admin_decision == 'approved'
 - Writes to file using Stage 3 file_writer module
 - Non-blocking: file write errors don't fail workflow
 
-**5. notify_user_node**
+**4. notify_user_node**
 - Terminal node that displays final message
 - Handles three outcomes: approved, rejected, error
 - Provides complete reservation details and next steps
@@ -933,7 +925,7 @@ def should_record_data(state: WorkflowState) -> Literal["record_data", "notify_u
 
 **Graph Structure:**
 ```
-START → user_interaction → create_reservation → admin_approval
+START → user_interaction → admin_approval
        → [if approved] → record_data → notify_user → END
        → [if rejected/error] → notify_user → END
 ```
@@ -948,8 +940,8 @@ START → user_interaction → create_reservation → admin_approval
 ### Integration Points
 
 **With Stage 1 (RAG):**
-- Uses `ParkingReservation` schema from agents/rag_chain.py
-- Leverages LLM for natural language interaction
+- Uses `build_agent()` from agents/rag_chain.py directly in the workflow
+- Same interactive RAG agent with all 5 tools available during conversation
 
 **With Stage 2 (Admin API):**
 - Polls database updated by Admin API or Admin Agent
@@ -973,9 +965,9 @@ START → user_interaction → create_reservation → admin_approval
 ### Demo Modes
 
 **Automated Mode:**
-- Simulated admin approval using background thread
-- 8-second delay for realistic testing
-- No manual intervention required
+- You chat with the RAG agent interactively to make a reservation
+- Background thread polls for pending reservations and auto-approves
+- No second terminal needed for admin
 
 **Manual Mode:**
 - Requires real Admin Agent or API interaction
