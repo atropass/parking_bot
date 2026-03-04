@@ -1,13 +1,13 @@
+import re
 import time
 from typing import TypedDict, Literal
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from langgraph.graph import StateGraph, END
 
-from config.settings import GOOGLE_API_KEY, LLM_MODEL
-from db.sql_store import create_reservation, get_reservation
+from db.sql_store import get_reservation
 from storage.file_writer import write_confirmed_reservation
-from agents.rag_chain import ParkingReservation
+from agents.rag_chain import build_agent
+from guardrails.pii_filter import redact_pii
 
 
 class WorkflowState(TypedDict):
@@ -20,111 +20,88 @@ class WorkflowState(TypedDict):
     error: str | None
 
 
+def _extract_response(result: dict) -> str:
+    ai_messages = [
+        m for m in result["messages"]
+        if hasattr(m, "type") and m.type == "ai" and m.content
+    ]
+    if not ai_messages:
+        return ""
+    content = ai_messages[-1].content
+    if isinstance(content, list):
+        return " ".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in content
+        )
+    return str(content)
+
+
+def _find_reservation_id(messages) -> int | None:
+    for msg in reversed(messages):
+        text = ""
+        if hasattr(msg, "content"):
+            text = msg.content if isinstance(msg.content, str) else str(msg.content)
+        match = re.search(r"reservation ID is #(\d+)", text, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    return None
+
+
 def user_interaction_node(state: WorkflowState) -> WorkflowState:
     print("\n" + "="*60)
     print("STAGE 4 WORKFLOW: User Interaction")
     print("="*60)
 
-    llm = ChatGoogleGenerativeAI(
-        model=LLM_MODEL,
-        google_api_key=GOOGLE_API_KEY,
-        temperature=0.3,
-    )
+    agent = build_agent()
+    messages = []
 
-    structured_llm = llm.with_structured_output(ParkingReservation)
+    print("\n--- CityPark Central Parking Assistant ---")
+    print("Chat with the assistant to make a reservation.")
+    print("Type 'done' when finished.\n")
 
-    system_prompt = """You are a parking assistant collecting reservation information.
-    Ask the user for these details one by one:
-    1. Full name (first and last name)
-    2. License plate number
-    3. Start date and time (format: YYYY-MM-DD HH:MM)
-    4. End date and time (format: YYYY-MM-DD HH:MM)
-    5. Preferred zone (A, B, or C - optional)
+    while True:
+        try:
+            user_input = input("You: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nConversation ended.")
+            break
 
-    Be conversational and friendly. After collecting all information, confirm with the user.
-    """
+        if not user_input:
+            continue
+        if user_input.lower() == "done":
+            break
 
-    print("\nStarting conversation with user...\n")
+        messages.append(HumanMessage(content=user_input))
+        result = agent.invoke({"messages": messages})
+        messages = result["messages"]
 
-    conversation = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content="I want to make a parking reservation"),
-        HumanMessage(content="My name is Alice Johnson"),
-        HumanMessage(content="License plate is XYZ-789"),
-        HumanMessage(content="Start: 2026-03-15 10:00"),
-        HumanMessage(content="End: 2026-03-15 18:00"),
-        HumanMessage(content="Zone A please"),
-    ]
+        response = _extract_response(result)
+        if response:
+            response = redact_pii(response)
+        print(f"\nAssistant: {response}\n")
 
-    print("User: I want to make a parking reservation")
-    print("Agent: Great! I'll help you with that. What's your full name?")
-    print("User: Alice Johnson")
-    print("Agent: Thank you! What's your license plate number?")
-    print("User: XYZ-789")
-    print("Agent: When would you like to start your reservation?")
-    print("User: 2026-03-15 10:00")
-    print("Agent: And when will you finish?")
-    print("User: 2026-03-15 18:00")
-    print("Agent: Which zone do you prefer? (A, B, or C)")
-    print("User: Zone A please")
-    print("\nAll information collected!")
+        # check if submit_reservation was called during this turn
+        reservation_id = _find_reservation_id(messages)
+        if reservation_id is not None:
+            reservation = get_reservation(reservation_id)
+            if reservation:
+                state["reservation_data"] = {
+                    "full_name": reservation["full_name"],
+                    "license_plate": reservation["license_plate"],
+                    "start_datetime": reservation["start_datetime"],
+                    "end_datetime": reservation["end_datetime"],
+                    "zone_preference": reservation["zone_preference"],
+                }
+                state["reservation_id"] = reservation_id
+                state["admin_decision"] = "pending"
+                print(f"\nReservation #{reservation_id} submitted, waiting for admin approval...")
+            break
 
-    try:
-        reservation_data = structured_llm.invoke(conversation)
-
-        state["reservation_data"] = {
-            "full_name": reservation_data.full_name,
-            "license_plate": reservation_data.license_plate,
-            "start_datetime": reservation_data.start_datetime,
-            "end_datetime": reservation_data.end_datetime,
-            "zone_preference": reservation_data.zone_preference,
-        }
-
-        print(f"\nReservation Details:")
-        print(f"   Name: {reservation_data.full_name}")
-        print(f"   Plate: {reservation_data.license_plate}")
-        print(f"   Period: {reservation_data.start_datetime} to {reservation_data.end_datetime}")
-        print(f"   Zone: {reservation_data.zone_preference or 'Any'}")
-
-    except Exception as e:
-        state["error"] = f"Failed to extract reservation data: {str(e)}"
-        print(f"\nError: {state['error']}")
+    if state.get("reservation_id") is None and state.get("error") is None:
+        state["error"] = "No reservation was submitted during the conversation"
 
     return state
 
-
-def create_reservation_node(state: WorkflowState) -> WorkflowState:
-    print("\n" + "="*60)
-    print("STAGE 4 WORKFLOW: Creating Reservation")
-    print("="*60)
-
-    if state.get("error"):
-        return state
-
-    reservation_data = state["reservation_data"]
-
-    try:
-        reservation_id = create_reservation(
-            full_name=reservation_data["full_name"],
-            license_plate=reservation_data["license_plate"],
-            start_datetime=reservation_data["start_datetime"],
-            end_datetime=reservation_data["end_datetime"],
-            zone_preference=reservation_data["zone_preference"],
-        )
-
-        state["reservation_id"] = reservation_id
-        state["admin_decision"] = "pending"
-
-        print(f"\nReservation created successfully!")
-        print(f"   Reservation ID: #{reservation_id}")
-        print(f"   Status: pending")
-        print(f"\nWaiting for administrator approval...")
-
-    except Exception as e:
-        state["error"] = f"Failed to create reservation: {str(e)}"
-        print(f"\nError: {state['error']}")
-
-    return state
 
 
 def admin_approval_node(state: WorkflowState) -> WorkflowState:
@@ -276,15 +253,13 @@ def build_workflow() -> StateGraph:
     workflow = StateGraph(WorkflowState)
 
     workflow.add_node("user_interaction", user_interaction_node)
-    workflow.add_node("create_reservation", create_reservation_node)
     workflow.add_node("admin_approval", admin_approval_node)
     workflow.add_node("record_data", record_data_node)
     workflow.add_node("notify_user", notify_user_node)
 
     workflow.set_entry_point("user_interaction")
 
-    workflow.add_edge("user_interaction", "create_reservation")
-    workflow.add_edge("create_reservation", "admin_approval")
+    workflow.add_edge("user_interaction", "admin_approval")
 
     workflow.add_conditional_edges(
         "admin_approval",

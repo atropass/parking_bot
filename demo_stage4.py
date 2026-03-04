@@ -1,48 +1,60 @@
+import os
 import sys
 import time
 import threading
+
+from config.settings import GOOGLE_API_KEY, CHROMA_PERSIST_DIR
 from db.sql_store import init_db, update_reservation_status, get_pending_reservations
+from db.vector_store import build_vector_store, load_vector_store
 from orchestration.workflow import run_workflow
 
 
-def simulate_admin_approval(delay_seconds=5):
-    print(f"\n[SIMULATED ADMIN] Starting automated approval in {delay_seconds}s...")
+def setup():
+    if not GOOGLE_API_KEY:
+        print("Error: GOOGLE_API_KEY not found in .env file.")
+        sys.exit(1)
 
-    time.sleep(delay_seconds)
+    init_db()
 
-    # Get pending reservations
-    pending = get_pending_reservations()
-
-    if pending:
-        reservation_id = pending[0]["id"]
-        print(f"\n[SIMULATED ADMIN] Auto-approving reservation #{reservation_id}...")
-
-        update_reservation_status(
-            reservation_id=reservation_id,
-            status="approved",
-            admin_comment="Auto-approved by simulation",
-        )
-
-        print(f"[SIMULATED ADMIN] Reservation #{reservation_id} approved!")
+    if not os.path.exists(CHROMA_PERSIST_DIR):
+        print("Building vector store (first run)...")
+        build_vector_store()
     else:
-        print("\n[SIMULATED ADMIN] No pending reservations found")
+        load_vector_store()
+
+
+def simulate_admin_approval():
+    """Poll for pending reservations and auto-approve the first one found."""
+    print("\n[SIMULATED ADMIN] Watching for pending reservations...")
+
+    for _ in range(120):
+        pending = get_pending_reservations()
+        if pending:
+            reservation_id = pending[0]["id"]
+            print(f"\n[SIMULATED ADMIN] Auto-approving reservation #{reservation_id}...")
+            update_reservation_status(
+                reservation_id=reservation_id,
+                status="approved",
+                admin_comment="Auto-approved by simulation",
+            )
+            print(f"[SIMULATED ADMIN] Reservation #{reservation_id} approved!")
+            return
+        time.sleep(1)
+
+    print("\n[SIMULATED ADMIN] Timeout: no pending reservations appeared")
 
 
 def demo_auto_approve():
     print("""
    STAGE 4 DEMO: Automatic Approval (Simulated Admin)
 
-   This demo runs the complete workflow with automated
-   admin approval for testing purposes.
+   Chat with the assistant to make a reservation.
+   Once submitted, it will be auto-approved by a background thread.
     """)
 
-    init_db()
+    setup()
 
-    admin_thread = threading.Thread(
-        target=simulate_admin_approval,
-        args=(8,),
-        daemon=True
-    )
+    admin_thread = threading.Thread(target=simulate_admin_approval, daemon=True)
     admin_thread.start()
 
     try:
@@ -66,17 +78,17 @@ def demo_manual_approve():
     print("""
    STAGE 4 DEMO: Manual Approval
 
-   This demo requires you to approve the reservation
-   manually using Admin Agent or API.
+   Chat with the assistant to make a reservation.
+   Then approve it from another terminal.
     """)
 
-    init_db()
+    setup()
 
-    print("\nMANUAL APPROVAL REQUIRED")
+    print("MANUAL APPROVAL REQUIRED")
     print("\n1. Keep this terminal running")
     print("2. Open another terminal and run ONE of:")
-    print("   • python run_admin_agent.py  (AI-powered)")
-    print("   • curl commands (see below)")
+    print("   python run_admin_agent.py  (AI-powered)")
+    print("   curl commands (see README)")
     print("\n3. Approve the reservation when workflow starts polling\n")
 
     input("Press ENTER when ready to start workflow...")
