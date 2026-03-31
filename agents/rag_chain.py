@@ -1,8 +1,14 @@
+import logging
+import re
+
 from pydantic import BaseModel, Field
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.tools import tool
-from langchain_core.messages import SystemMessage
-from langgraph.prebuilt import create_react_agent
+from langchain_core.messages import SystemMessage, AIMessage
+from langgraph.graph import StateGraph, MessagesState, START, END
+from langgraph.prebuilt import ToolNode
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import interrupt
 
 from config.settings import GOOGLE_API_KEY, LLM_MODEL
 from db.vector_store import get_retriever
@@ -11,8 +17,9 @@ from db.sql_store import (
     query_pricing,
     query_availability,
     create_reservation,
-    get_reservation,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SearchParkingInput(BaseModel):
@@ -183,19 +190,78 @@ TOOLS = [
 ]
 
 
-def build_agent():
+def _extract_reservation_id(messages) -> int | None:
+    for msg in reversed(messages):
+        if hasattr(msg, "name") and msg.name == "submit_reservation":
+            match = re.search(r"#(\d+)", str(msg.content))
+            if match:
+                return int(match.group(1))
+    return None
+
+
+def build_graph():
     llm = ChatGoogleGenerativeAI(
         model=LLM_MODEL,
         google_api_key=GOOGLE_API_KEY,
         temperature=0.2,
     )
+    model = llm.bind_tools(TOOLS)
+    tool_node = ToolNode(TOOLS)
 
-    agent = create_react_agent(
-        model=llm,
-        tools=TOOLS,
-        prompt=SystemMessage(content=SYSTEM_PROMPT),
-    )
-    return agent
+    def chatbot(state: MessagesState):
+        messages = [SystemMessage(content=SYSTEM_PROMPT)] + state["messages"]
+        response = model.invoke(messages)
+        return {"messages": [response]}
+
+    def route_after_chatbot(state: MessagesState):
+        last = state["messages"][-1]
+        if hasattr(last, "tool_calls") and last.tool_calls:
+            return "tools"
+        return END
+
+    def route_after_tools(state: MessagesState):
+        for msg in reversed(state["messages"]):
+            if hasattr(msg, "name") and msg.name == "submit_reservation":
+                return "human_review"
+            if hasattr(msg, "tool_calls"):
+                break
+        return "chatbot"
+
+    def human_review(state: MessagesState):
+        reservation_id = _extract_reservation_id(state["messages"])
+        logger.info("Reservation #%s submitted, interrupting for admin review", reservation_id)
+
+        admin_decision = interrupt({
+            "type": "admin_review",
+            "reservation_id": reservation_id,
+        })
+
+        status = admin_decision.get("status", "unknown")
+        comment = admin_decision.get("comment", "")
+
+        if status == "approved":
+            response = "Great news! Your reservation has been approved by the administrator."
+            if comment:
+                response += f" Admin note: {comment}"
+        else:
+            response = "Unfortunately, your reservation has been rejected by the administrator."
+            if comment:
+                response += f" Reason: {comment}"
+
+        return {"messages": [AIMessage(content=response)]}
+
+    graph = StateGraph(MessagesState)
+    graph.add_node("chatbot", chatbot)
+    graph.add_node("tools", tool_node)
+    graph.add_node("human_review", human_review)
+
+    graph.add_edge(START, "chatbot")
+    graph.add_conditional_edges("chatbot", route_after_chatbot, {"tools": "tools", END: END})
+    graph.add_conditional_edges("tools", route_after_tools, {"human_review": "human_review", "chatbot": "chatbot"})
+    graph.add_edge("human_review", END)
+
+    checkpointer = MemorySaver()
+    return graph.compile(checkpointer=checkpointer)
 
 
 def extract_reservation(messages) -> ParkingReservation | None:
@@ -219,5 +285,6 @@ def extract_reservation(messages) -> ParkingReservation | None:
             *messages
         ])
         return result
-    except Exception:
+    except (ValueError, TypeError) as e:
+        logger.warning("Failed to extract reservation details: %s", e)
         return None

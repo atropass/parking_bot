@@ -1,119 +1,175 @@
+"""
+Stage 2 Demo: Human-in-the-Loop Parking Reservation System
+
+This demo shows the complete HITL flow:
+  1. User submits a reservation through the chatbot agent
+  2. The LangGraph flow STOPS (interrupt) and waits for admin approval
+  3. Admin approves/rejects via the REST API (FastAPI)
+  4. The flow RESUMES and the user receives the admin's decision
+
+Usage:
+  python demo_stage2.py              - Run the full automated HITL demo
+  python demo_stage2.py admin        - Start only the Admin API server
+  python demo_stage2.py pending      - List pending reservations
+  python demo_stage2.py check <id>   - Check reservation status
+"""
+
+import os
 import sys
-from db.sql_store import init_db, create_reservation, get_reservation, get_pending_reservations
+import time
+import logging
+import threading
+
+from db.sql_store import init_db, get_reservation, get_pending_reservations
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 def run_admin_server():
-    print("Starting Admin API server on http://localhost:8000")
-    print("Access interactive docs at: http://localhost:8000/docs")
-    print("Dashboard at: http://localhost:8000/admin/dashboard")
-    print("\nAvailable endpoints:")
-    print("  GET  /admin/pending          - List pending reservations")
-    print("  POST /admin/approve/{id}     - Approve reservation")
-    print("  POST /admin/reject/{id}      - Reject reservation")
-    print("\nPress Ctrl+C to stop\n")
+    logger.info("Starting Admin API server on http://localhost:8000")
+    logger.info("Interactive docs at: http://localhost:8000/docs")
 
     import uvicorn
     from admin.approval_service import app
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
 
 
-def simulate_user_reservation():
-    print("=== Simulating User Reservation ===\n")
+def run_hitl_demo():
+    logger.info("=== Human-in-the-Loop Demo ===")
+
+    from config.settings import GOOGLE_API_KEY, CHROMA_PERSIST_DIR
+    from db.vector_store import build_vector_store, load_vector_store
+    from agents.rag_chain import build_graph
+    from langchain_core.messages import HumanMessage
+    from langgraph.types import Command
+
+    if not GOOGLE_API_KEY:
+        logger.error("GOOGLE_API_KEY not set in .env")
+        sys.exit(1)
 
     init_db()
 
-    print("Creating reservation...")
-    reservation_id = create_reservation(
-        full_name="John Doe",
-        license_plate="ABC-123",
-        start_datetime="2026-03-10 09:00",
-        end_datetime="2026-03-10 17:00",
-        zone_preference="A",
+    if not os.path.exists(CHROMA_PERSIST_DIR):
+        logger.info("Building vector store...")
+        build_vector_store()
+    else:
+        load_vector_store()
+
+    from admin.approval_service import app as admin_app
+    import uvicorn
+
+    server_thread = threading.Thread(
+        target=lambda: uvicorn.run(admin_app, host="0.0.0.0", port=8000, log_level="warning"),
+        daemon=True,
+    )
+    server_thread.start()
+    time.sleep(1)
+    logger.info("Admin API server started in background")
+
+    graph = build_graph()
+    config = {"configurable": {"thread_id": "demo-hitl"}}
+
+    logger.info("Step 1: User requests a parking reservation")
+    user_message = (
+        "I want to reserve a parking spot. My name is John Doe, "
+        "license plate ABC-123, from 2026-03-10 09:00 to 2026-03-10 17:00, zone A."
+    )
+    logger.info("User: %s", user_message)
+
+    result = graph.invoke(
+        {"messages": [HumanMessage(content=user_message)]},
+        config,
     )
 
-    print(f"\n✓ Reservation created successfully!")
-    print(f"  Reservation ID: #{reservation_id}")
-    print(f"  Name: John Doe")
-    print(f"  License Plate: ABC-123")
-    print(f"  Period: 2026-03-10 09:00 to 17:00")
-    print(f"  Zone: A")
-    print(f"  Status: pending")
-    print(f"\nThe reservation is waiting for admin approval.")
-    print(f"\nTo approve via API:")
-    print(f"  curl -X POST http://localhost:8000/admin/approve/{reservation_id} -H 'Content-Type: application/json' -d '{{}}'")
-    print(f"\nTo reject via API:")
-    print(f"  curl -X POST http://localhost:8000/admin/reject/{reservation_id} -H 'Content-Type: application/json' -d '{{\"reason\": \"No space available\"}}'")
-    print(f"\nTo check status:")
-    print(f"  python demo_stage2.py check {reservation_id}")
+    state = graph.get_state(config)
+    if not state.next:
+        logger.error("Graph did not interrupt. HITL flow not triggered.")
+        sys.exit(1)
+
+    interrupt_data = state.tasks[0].interrupts[0].value
+    logger.info("Step 2: Flow STOPPED - Human-in-the-Loop interrupt triggered")
+    logger.info("Interrupt data: %s", interrupt_data)
+
+    import httpx
+    logger.info("Step 3: Admin approves reservation via REST API")
+    response = httpx.get("http://localhost:8000/admin/pending")
+    pending = response.json()
+    if pending:
+        res_id = pending[0]["id"]
+        approve_response = httpx.post(
+            f"http://localhost:8000/admin/approve/{res_id}",
+            json={"comment": "Approved by admin"},
+        )
+        logger.info("Admin API response: %s", approve_response.json())
+
+    logger.info("Step 4: Resuming graph with admin decision")
+    result = graph.invoke(
+        Command(resume={"status": "approved", "comment": "Approved by admin"}),
+        config,
+    )
+
+    for msg in reversed(result["messages"]):
+        if hasattr(msg, "type") and msg.type == "ai" and msg.content:
+            logger.info("Bot response to user: %s", msg.content)
+            break
+
+    logger.info("=== Demo complete: Full HITL flow executed successfully ===")
 
 
 def check_reservation_status(reservation_id: int):
-    print(f"=== Checking Reservation #{reservation_id} ===\n")
-
     init_db()
     reservation = get_reservation(reservation_id)
 
     if not reservation:
-        print(f"Error: Reservation #{reservation_id} not found")
+        logger.error("Reservation #%d not found", reservation_id)
         return
 
-    print(f"Name: {reservation['full_name']}")
-    print(f"License Plate: {reservation['license_plate']}")
-    print(f"Period: {reservation['start_datetime']} to {reservation['end_datetime']}")
-    if reservation['zone_preference']:
-        print(f"Zone: {reservation['zone_preference']}")
-    print(f"\nStatus: {reservation['status'].upper()}")
-
-    if reservation['status'] == 'pending':
-        print("⏳ Waiting for admin approval...")
-    elif reservation['status'] == 'approved':
-        print("✓ Approved!")
-        if reservation['admin_comment']:
-            print(f"   Admin comment: {reservation['admin_comment']}")
-        print(f"   Reviewed at: {reservation['reviewed_at']}")
-    elif reservation['status'] == 'rejected':
-        print("✗ Rejected")
-        if reservation['admin_comment']:
-            print(f"   Reason: {reservation['admin_comment']}")
-        print(f"   Reviewed at: {reservation['reviewed_at']}")
+    logger.info("Reservation #%d:", reservation_id)
+    logger.info("  Name: %s", reservation["full_name"])
+    logger.info("  License Plate: %s", reservation["license_plate"])
+    logger.info("  Period: %s to %s", reservation["start_datetime"], reservation["end_datetime"])
+    if reservation["zone_preference"]:
+        logger.info("  Zone: %s", reservation["zone_preference"])
+    logger.info("  Status: %s", reservation["status"].upper())
+    if reservation["admin_comment"]:
+        logger.info("  Admin comment: %s", reservation["admin_comment"])
 
 
 def list_all_pending():
-    print("=== Pending Reservations ===\n")
-
     init_db()
     pending = get_pending_reservations()
 
     if not pending:
-        print("No pending reservations.")
+        logger.info("No pending reservations.")
         return
 
     for res in pending:
-        print(f"ID #{res['id']}: {res['full_name']} ({res['license_plate']})")
-        print(f"  Period: {res['start_datetime']} to {res['end_datetime']}")
-        if res['zone_preference']:
-            print(f"  Zone: {res['zone_preference']}")
-        print(f"  Created: {res['created_at']}")
-        print()
+        logger.info(
+            "  #%d: %s (%s) - %s to %s",
+            res["id"], res["full_name"], res["license_plate"],
+            res["start_datetime"], res["end_datetime"],
+        )
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print(__doc__)
-        sys.exit(1)
+        run_hitl_demo()
+        sys.exit(0)
 
     command = sys.argv[1].lower()
 
     if command == "admin":
+        init_db()
         run_admin_server()
-    elif command == "user":
-        simulate_user_reservation()
     elif command == "check":
         if len(sys.argv) < 3:
-            print("Usage: python demo_stage2.py check <reservation_id>")
+            logger.error("Usage: python demo_stage2.py check <reservation_id>")
             sys.exit(1)
-        reservation_id = int(sys.argv[2])
-        check_reservation_status(reservation_id)
+        check_reservation_status(int(sys.argv[2]))
     elif command == "pending":
         list_all_pending()
     else:

@@ -115,7 +115,7 @@ def test_reject_reservation(client):
 
     response = client.post(
         f"/admin/reject/{reservation_id}",
-        json={"reason": "No space available"},
+        json={"comment": "No space available"},
     )
     assert response.status_code == 200
     data = response.json()
@@ -136,7 +136,7 @@ def test_approve_non_existent_reservation(client):
 
 def test_reject_non_existent_reservation(client):
     """Test rejecting a non-existent reservation returns 404."""
-    response = client.post("/admin/reject/999", json={"reason": "test"})
+    response = client.post("/admin/reject/999", json={"comment": "test"})
     assert response.status_code == 404
 
 
@@ -163,10 +163,10 @@ def test_cannot_reject_already_rejected_reservation(client):
     )
 
     # First rejection
-    response1 = client.post(f"/admin/reject/{reservation_id}", json={"reason": "test"})
+    response1 = client.post(f"/admin/reject/{reservation_id}", json={"comment": "test"})
     assert response1.status_code == 200
 
     # Second rejection should fail
-    response2 = client.post(f"/admin/reject/{reservation_id}", json={"reason": "test"})
+    response2 = client.post(f"/admin/reject/{reservation_id}", json={"comment": "test"})
     assert response2.status_code == 400
     assert "already rejected" in response2.json()["detail"]

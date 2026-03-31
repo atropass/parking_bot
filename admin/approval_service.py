@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -8,6 +10,7 @@ from db.sql_store import (
     update_reservation_status,
 )
 
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Parking Admin API",
@@ -16,16 +19,10 @@ app = FastAPI(
 )
 
 
-class ApprovalRequest(BaseModel):
+class AdminDecisionRequest(BaseModel):
     comment: Optional[str] = Field(
         default=None,
-        description="Optional comment from admin (e.g., 'Approved for VIP customer')"
-    )
-
-
-class RejectionRequest(BaseModel):
-    reason: str = Field(
-        description="Required reason for rejection (e.g., 'No space available')"
+        description="Optional comment from admin (reason for rejection or note for approval)"
     )
 
 
@@ -77,7 +74,7 @@ def get_reservation_details(reservation_id: int):
 
 
 @app.post("/admin/approve/{reservation_id}", response_model=StatusResponse)
-def approve_reservation(reservation_id: int, request: ApprovalRequest):
+def approve_reservation(reservation_id: int, request: AdminDecisionRequest):
     reservation = get_reservation(reservation_id)
     if not reservation:
         raise HTTPException(status_code=404, detail=f"Reservation {reservation_id} not found")
@@ -97,6 +94,7 @@ def approve_reservation(reservation_id: int, request: ApprovalRequest):
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update reservation")
 
+    logger.info("Reservation %d approved", reservation_id)
     return StatusResponse(
         success=True,
         message=f"Reservation {reservation_id} approved successfully"
@@ -104,7 +102,7 @@ def approve_reservation(reservation_id: int, request: ApprovalRequest):
 
 
 @app.post("/admin/reject/{reservation_id}", response_model=StatusResponse)
-def reject_reservation(reservation_id: int, request: RejectionRequest):
+def reject_reservation(reservation_id: int, request: AdminDecisionRequest):
     reservation = get_reservation(reservation_id)
     if not reservation:
         raise HTTPException(status_code=404, detail=f"Reservation {reservation_id} not found")
@@ -118,15 +116,16 @@ def reject_reservation(reservation_id: int, request: RejectionRequest):
     success = update_reservation_status(
         reservation_id=reservation_id,
         status="rejected",
-        admin_comment=request.reason,
+        admin_comment=request.comment,
     )
 
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update reservation")
 
+    logger.info("Reservation %d rejected", reservation_id)
     return StatusResponse(
         success=True,
-        message=f"Reservation {reservation_id} rejected: {request.reason}"
+        message=f"Reservation {reservation_id} rejected"
     )
 
 
